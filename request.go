@@ -117,7 +117,15 @@ func DoRequest(basedir, envfile string) error {
 		rd.BodyType = "none"
 	}
 
-	return createRequestFile(rd)
+	err = createRequestFile(rd)
+	if err != nil {
+		return fmt.Errorf("create request file error %w", err)
+	}
+
+	// print request back for next processors
+	fmt.Print(string(rawReq))
+
+	return nil
 }
 
 func createRequestFile(rd RequestData) error {
@@ -162,8 +170,13 @@ func requestContent(rd RequestData) string {
 	if !strings.HasPrefix(path, "/") {
 		path = "/" + path
 	}
+	path = EnvToPath(strings.TrimPrefix(path, "/"), rd.Env)
+	if !strings.HasPrefix(path, "/") {
+		path = "/" + path
+	}
 	if rd.RawQuery != "" {
-		path += "?" + rd.RawQuery
+		query := EnvToBody(rd.RawQuery, rd.Env)
+		path += "?" + query
 	}
 	proto, host := "", ""
 	if rd.Env != nil {

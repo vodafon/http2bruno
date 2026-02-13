@@ -760,6 +760,41 @@ func TestRequestContent(t *testing.T) {
 				"url: ://",
 			},
 		},
+		{
+			name: "request with path variable substitution",
+			rd: RequestData{
+				Name:       "get-user",
+				FilesCount: 0,
+				Method:     "GET",
+				Path:       "/users/123",
+				BodyType:   "none",
+				Env: &BrunoEnv{
+					Vars:        map[string]string{"proto": "https", "host": "example.com", "user_id": "123"},
+					ReverseVars: map[string]string{"123": "user_id"},
+				},
+			},
+			contains: []string{
+				"url: https://example.com/users/{{user_id}}",
+			},
+		},
+		{
+			name: "request with query string variable substitution",
+			rd: RequestData{
+				Name:       "search-user",
+				FilesCount: 0,
+				Method:     "GET",
+				Path:       "/api/search",
+				RawQuery:   "user_id=123&account=456",
+				BodyType:   "none",
+				Env: &BrunoEnv{
+					Vars:        map[string]string{"proto": "https", "host": "example.com", "user_id": "123", "account_id": "456"},
+					ReverseVars: map[string]string{"123": "user_id", "456": "account_id"},
+				},
+			},
+			contains: []string{
+				"url: https://example.com/api/search?user_id={{user_id}}&account={{account_id}}",
+			},
+		},
 	}
 
 	for _, tt := range tests {
