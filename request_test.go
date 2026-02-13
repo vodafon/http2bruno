@@ -787,3 +787,316 @@ func containsSubstring(s, substr string) bool {
 	}
 	return false
 }
+
+func TestCreateRequestFileWithBasedir(t *testing.T) {
+	tests := []struct {
+		name         string
+		setupDirs    []string // directories to create relative to tmpDir
+		basedir      string   // basedir relative to tmpDir (empty means use tmpDir directly)
+		rd           RequestData
+		expectedFile string // expected file path relative to tmpDir
+		wantErr      bool
+	}{
+		{
+			name:      "file created in basedir when basedir is set",
+			setupDirs: []string{"myproject"},
+			basedir:   "myproject",
+			rd: RequestData{
+				Method:   "GET",
+				Path:     "/api/users",
+				BodyType: "none",
+				Env: &BrunoEnv{
+					Vars: map[string]string{"proto": "https", "host": "example.com"},
+				},
+			},
+			expectedFile: "myproject/api-users-GET.bru",
+			wantErr:      false,
+		},
+		{
+			name:      "file created in nested basedir",
+			setupDirs: []string{"projects", "projects/myapi"},
+			basedir:   "projects/myapi",
+			rd: RequestData{
+				Method:   "POST",
+				Path:     "/users/create",
+				BodyType: "json",
+				Body:     `{"name": "test"}`,
+				Env: &BrunoEnv{
+					Vars: map[string]string{"proto": "https", "host": "api.example.com"},
+				},
+			},
+			expectedFile: "projects/myapi/users-create-POST.bru",
+			wantErr:      false,
+		},
+		{
+			name:      "file created in matching subfolder within basedir",
+			setupDirs: []string{"collection", "collection/api"},
+			basedir:   "collection",
+			rd: RequestData{
+				Method:   "GET",
+				Path:     "/api/users/123",
+				BodyType: "none",
+				Env: &BrunoEnv{
+					Vars: map[string]string{"proto": "https", "host": "example.com"},
+				},
+			},
+			expectedFile: "collection/api/users-123-GET.bru",
+			wantErr:      false,
+		},
+		{
+			name:      "file created in deeply nested matching subfolder",
+			setupDirs: []string{"collection", "collection/api", "collection/api/v1", "collection/api/v1/users"},
+			basedir:   "collection",
+			rd: RequestData{
+				Method:   "DELETE",
+				Path:     "/api/v1/users/456",
+				BodyType: "none",
+				Env: &BrunoEnv{
+					Vars: map[string]string{"proto": "https", "host": "example.com"},
+				},
+			},
+			expectedFile: "collection/api/v1/users/456-DELETE.bru",
+			wantErr:      false,
+		},
+		{
+			name:      "basedir with path containing env variables",
+			setupDirs: []string{"myproject", "myproject/api"},
+			basedir:   "myproject",
+			rd: RequestData{
+				Method:   "GET",
+				Path:     "/api/users/12345",
+				BodyType: "none",
+				Env: &BrunoEnv{
+					Vars:        map[string]string{"proto": "https", "host": "example.com", "user_id": "12345"},
+					ReverseVars: map[string]string{"12345": "user_id"},
+				},
+			},
+			expectedFile: "myproject/api/users-USER_ID-GET.bru",
+			wantErr:      false,
+		},
+		{
+			name:      "absolute path as basedir",
+			setupDirs: []string{}, // will use tmpDir directly as absolute path
+			basedir:   "",         // special case: test will set absolute path
+			rd: RequestData{
+				Method:   "GET",
+				Path:     "/health",
+				BodyType: "none",
+				Env: &BrunoEnv{
+					Vars: map[string]string{"proto": "https", "host": "example.com"},
+				},
+			},
+			expectedFile: "health-GET.bru",
+			wantErr:      false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tmpDir := t.TempDir()
+
+			// Setup directories
+			for _, dir := range tt.setupDirs {
+				err := os.MkdirAll(filepath.Join(tmpDir, dir), 0755)
+				if err != nil {
+					t.Fatalf("failed to create directory %q: %v", dir, err)
+				}
+			}
+
+			// Set basedir
+			var basedir string
+			if tt.basedir == "" {
+				basedir = tmpDir // absolute path case
+			} else {
+				basedir = filepath.Join(tmpDir, tt.basedir)
+			}
+
+			// Create RequestData with Basedir set
+			rd := tt.rd
+			rd.Basedir = basedir
+
+			// Run createRequestFile
+			err := createRequestFile(rd)
+
+			if (err != nil) != tt.wantErr {
+				t.Errorf("createRequestFile() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+
+			if tt.wantErr {
+				return
+			}
+
+			// Verify file was created at expected location
+			expectedPath := filepath.Join(tmpDir, tt.expectedFile)
+			if _, err := os.Stat(expectedPath); os.IsNotExist(err) {
+				// List what files were actually created to help debug
+				var createdFiles []string
+				filepath.Walk(tmpDir, func(path string, info os.FileInfo, err error) error {
+					if !info.IsDir() {
+						rel, _ := filepath.Rel(tmpDir, path)
+						createdFiles = append(createdFiles, rel)
+					}
+					return nil
+				})
+				t.Errorf("Expected file %q was not created.\nFiles created: %v", tt.expectedFile, createdFiles)
+			}
+		})
+	}
+}
+
+func TestCreateRequestFileBasedirNotSet(t *testing.T) {
+	// This test documents the current buggy behavior where if Basedir is not set,
+	// the file is created in current directory instead of the intended basedir.
+
+	tmpDir := t.TempDir()
+
+	// Create a subdirectory that should be the basedir
+	basedir := filepath.Join(tmpDir, "intended-basedir")
+	os.MkdirAll(basedir, 0755)
+
+	// Create RequestData WITHOUT setting Basedir (simulating the bug in DoRequest)
+	rd := RequestData{
+		// Basedir is intentionally NOT set - this is the bug!
+		Method:   "GET",
+		Path:     "/api/test",
+		BodyType: "none",
+		Env: &BrunoEnv{
+			Vars: map[string]string{"proto": "https", "host": "example.com"},
+		},
+	}
+
+	// Change to tmpDir so we can observe where file is created
+	origDir, _ := os.Getwd()
+	os.Chdir(tmpDir)
+	defer os.Chdir(origDir)
+
+	err := createRequestFile(rd)
+	if err != nil {
+		t.Fatalf("createRequestFile() error = %v", err)
+	}
+
+	// BUG: File is created in current directory (tmpDir) instead of basedir
+	// because rd.Basedir is empty, findRequestFolder defaults to "."
+	buggyPath := filepath.Join(tmpDir, "api-test-GET.bru")
+	intendedPath := filepath.Join(basedir, "api-test-GET.bru")
+
+	buggyExists := false
+	if _, err := os.Stat(buggyPath); err == nil {
+		buggyExists = true
+	}
+
+	intendedExists := false
+	if _, err := os.Stat(intendedPath); err == nil {
+		intendedExists = true
+	}
+
+	// Document the bug: file is in current dir, not in intended basedir
+	if buggyExists && !intendedExists {
+		t.Logf("BUG CONFIRMED: File created at %q (current dir) instead of intended basedir", buggyPath)
+		// This is the expected buggy behavior - test passes to document it
+	}
+
+	// Clean up the file we created
+	os.Remove(buggyPath)
+}
+
+// TestDoRequestPassesBasedirToRequestData tests that DoRequest properly passes
+// the basedir parameter to RequestData. This test will FAIL until the bug is fixed.
+//
+// The bug: In DoRequest(), the RequestData struct is created without setting Basedir:
+//
+//	rd := RequestData{
+//	    Method:   req.Method,
+//	    Path:     req.URL.Path,
+//	    RawQuery: req.URL.RawQuery,
+//	    Env:      envs,
+//	    // Basedir is MISSING!
+//	}
+//
+// It should be:
+//
+//	rd := RequestData{
+//	    Basedir:  basedir,  // <-- ADD THIS
+//	    Method:   req.Method,
+//	    ...
+//	}
+func TestDoRequestPassesBasedirToRequestData(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Create basedir structure
+	basedir := filepath.Join(tmpDir, "my-collection")
+	envDir := filepath.Join(basedir, "environments")
+	os.MkdirAll(envDir, 0755)
+
+	// Create environment file
+	envContent := `vars {
+  proto: https
+  host: example.com
+}`
+	os.WriteFile(filepath.Join(envDir, "base.bru"), []byte(envContent), 0644)
+
+	// Create a raw HTTP request
+	rawRequest := "GET /api/users HTTP/1.1\r\nHost: example.com\r\n\r\n"
+
+	// Save original stdin and restore after test
+	origStdin := os.Stdin
+	defer func() { os.Stdin = origStdin }()
+
+	// Create a pipe to simulate stdin
+	r, w, _ := os.Pipe()
+	os.Stdin = r
+
+	// Write request to pipe in a goroutine
+	go func() {
+		w.Write([]byte(rawRequest))
+		w.Close()
+	}()
+
+	// Change to a different directory (not basedir) to verify file is NOT created here
+	otherDir := filepath.Join(tmpDir, "other-dir")
+	os.MkdirAll(otherDir, 0755)
+	origDir, _ := os.Getwd()
+	os.Chdir(otherDir)
+	defer os.Chdir(origDir)
+
+	// Call DoRequest with basedir
+	err := DoRequest(basedir, "environments/base.bru")
+	if err != nil {
+		t.Fatalf("DoRequest() error = %v", err)
+	}
+
+	// The file SHOULD be created in basedir, NOT in current directory (otherDir)
+	expectedInBasedir := filepath.Join(basedir, "api-users-GET.bru")
+	wrongInCurrentDir := filepath.Join(otherDir, "api-users-GET.bru")
+
+	basedirExists := false
+	if _, err := os.Stat(expectedInBasedir); err == nil {
+		basedirExists = true
+	}
+
+	currentDirExists := false
+	if _, err := os.Stat(wrongInCurrentDir); err == nil {
+		currentDirExists = true
+	}
+
+	// This assertion will FAIL until the bug is fixed
+	if !basedirExists {
+		t.Errorf("File should be created in basedir %q but wasn't", expectedInBasedir)
+	}
+
+	if currentDirExists {
+		t.Errorf("BUG: File was created in current directory %q instead of basedir", wrongInCurrentDir)
+	}
+
+	// List all files for debugging
+	var allFiles []string
+	filepath.Walk(tmpDir, func(path string, info os.FileInfo, err error) error {
+		if !info.IsDir() && filepath.Ext(path) == ".bru" {
+			rel, _ := filepath.Rel(tmpDir, path)
+			allFiles = append(allFiles, rel)
+		}
+		return nil
+	})
+	t.Logf("All .bru files created: %v", allFiles)
+}

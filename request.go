@@ -93,6 +93,7 @@ func DoRequest(basedir, envfile string) error {
 	}
 
 	rd := RequestData{
+		Basedir:  basedir,
 		Method:   req.Method,
 		Path:     req.URL.Path,
 		RawQuery: req.URL.RawQuery,
