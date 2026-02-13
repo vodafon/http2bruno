@@ -165,7 +165,7 @@ func requestContent(rd RequestData) string {
 		proto = rd.Env.Vars["proto"]
 		host = rd.Env.Vars["host"]
 	}
-	if host != rd.HTTPReq.Host {
+	if rd.HTTPReq != nil && host != rd.HTTPReq.Host {
 		fmt.Fprintf(os.Stderr, "[W] host mismatched. in envs - %s, in request - %s", host, rd.HTTPReq.Host)
 	}
 	rvars["url"] = fmt.Sprintf("%s://%s%s", proto, host, path)
