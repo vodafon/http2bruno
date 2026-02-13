@@ -1,0 +1,699 @@
+package main
+
+import (
+	"os"
+	"path/filepath"
+	"reflect"
+	"testing"
+)
+
+func TestBodyTypeName(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{"formUrlEncoded converts to form-urlencoded", "formUrlEncoded", "form-urlencoded"},
+		{"multipartForm converts to multipart-form", "multipartForm", "multipart-form"},
+		{"json returns json", "json", "json"},
+		{"xml returns xml", "xml", "xml"},
+		{"text returns text", "text", "text"},
+		{"none returns none", "none", "none"},
+		{"unknown type returns itself", "unknown", "unknown"},
+		{"empty string returns empty", "", ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := BodyTypeName(tt.input)
+			if got != tt.expected {
+				t.Errorf("BodyTypeName(%q) = %q, want %q", tt.input, got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestBodyTypeFromContentType(t *testing.T) {
+	tests := []struct {
+		name        string
+		contentType string
+		expected    string
+		wantErr     bool
+	}{
+		{"empty content type returns none", "", "none", false},
+		{"application/json returns json", "application/json", "json", false},
+		{"application/json with charset", "application/json; charset=utf-8", "json", false},
+		{"application/xml returns xml", "application/xml", "xml", false},
+		{"text/xml returns xml", "text/xml", "xml", false},
+		{"text/plain returns text", "text/plain", "text", false},
+		{"multipart/form-data returns multipartForm", "multipart/form-data", "multipartForm", false},
+		{"multipart/form-data with boundary", "multipart/form-data; boundary=----WebKitFormBoundary", "multipartForm", false},
+		{"application/x-www-form-urlencoded returns formUrlEncoded", "application/x-www-form-urlencoded", "formUrlEncoded", false},
+		{"unsupported content type returns error", "application/octet-stream", "", true},
+		{"invalid content type returns error", "invalid/;/type", "", true},
+		{"text/html unsupported", "text/html", "", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := BodyTypeFromContentType(tt.contentType)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("BodyTypeFromContentType(%q) error = %v, wantErr %v", tt.contentType, err, tt.wantErr)
+				return
+			}
+			if got != tt.expected {
+				t.Errorf("BodyTypeFromContentType(%q) = %q, want %q", tt.contentType, got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestParseBodyUrlEncoded(t *testing.T) {
+	tests := []struct {
+		name     string
+		body     string
+		expected map[string]string
+	}{
+		{
+			name:     "empty body returns empty map",
+			body:     "",
+			expected: map[string]string{},
+		},
+		{
+			name:     "single key-value pair",
+			body:     "key=value",
+			expected: map[string]string{"key": "value"},
+		},
+		{
+			name:     "multiple key-value pairs",
+			body:     "key1=value1&key2=value2",
+			expected: map[string]string{"key1": "value1", "key2": "value2"},
+		},
+		{
+			name:     "URL encoded values",
+			body:     "name=John%20Doe&email=john%40example.com",
+			expected: map[string]string{"name": "John Doe", "email": "john@example.com"},
+		},
+		{
+			name:     "key without value",
+			body:     "key",
+			expected: map[string]string{"key": ""},
+		},
+		{
+			name:     "key with empty value",
+			body:     "key=",
+			expected: map[string]string{"key": ""},
+		},
+		{
+			name:     "multiple keys some without values",
+			body:     "key1=value1&key2&key3=value3",
+			expected: map[string]string{"key1": "value1", "key2": "", "key3": "value3"},
+		},
+		{
+			name:     "value with equals sign",
+			body:     "equation=1%2B1=2",
+			expected: map[string]string{"equation": "1+1=2"},
+		},
+		{
+			name:     "special characters encoded",
+			body:     "data=%7B%22id%22%3A1%7D",
+			expected: map[string]string{"data": `{"id":1}`},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := ParseBodyUrlEncoded(tt.body)
+			if !reflect.DeepEqual(got, tt.expected) {
+				t.Errorf("ParseBodyUrlEncoded(%q) = %v, want %v", tt.body, got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestExtractBoundary(t *testing.T) {
+	tests := []struct {
+		name     string
+		body     string
+		expected string
+	}{
+		{
+			name:     "boundary with CRLF line ending",
+			body:     "--boundary123\r\nContent-Disposition: form-data; name=\"field\"\r\n\r\nvalue",
+			expected: "boundary123",
+		},
+		{
+			name:     "boundary with LF line ending",
+			body:     "--boundary456\r\nContent-Disposition: form-data; name=\"field\"\r\n\r\nvalue",
+			expected: "boundary456",
+		},
+		{
+			name:     "WebKit style boundary",
+			body:     "----WebKitFormBoundary7MA4YWxkTrZu0gW\r\nContent-Disposition: form-data; name=\"file\"",
+			expected: "--WebKitFormBoundary7MA4YWxkTrZu0gW",
+		},
+		{
+			name:     "no boundary prefix returns empty",
+			body:     "Content-Disposition: form-data",
+			expected: "",
+		},
+		{
+			name:     "empty body returns empty",
+			body:     "",
+			expected: "",
+		},
+		{
+			name:     "only dashes",
+			body:     "--",
+			expected: "",
+		},
+		{
+			name:     "boundary with special chars",
+			body:     "--abc-123_XYZ\r\ndata",
+			expected: "abc-123_XYZ",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := extractBoundary(tt.body)
+			if got != tt.expected {
+				t.Errorf("extractBoundary() = %q, want %q", got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestParseBodyMultipartForm(t *testing.T) {
+	tests := []struct {
+		name     string
+		body     string
+		expected map[string]string
+	}{
+		{
+			name:     "empty body returns empty map",
+			body:     "",
+			expected: map[string]string{},
+		},
+		{
+			name: "single field",
+			body: "--boundary\r\n" +
+				"Content-Disposition: form-data; name=\"field1\"\r\n\r\n" +
+				"value1\r\n" +
+				"--boundary--\r\n",
+			expected: map[string]string{"field1": "value1"},
+		},
+		{
+			name: "multiple fields",
+			body: "--boundary\r\n" +
+				"Content-Disposition: form-data; name=\"field1\"\r\n\r\n" +
+				"value1\r\n" +
+				"--boundary\r\n" +
+				"Content-Disposition: form-data; name=\"field2\"\r\n\r\n" +
+				"value2\r\n" +
+				"--boundary--\r\n",
+			expected: map[string]string{"field1": "value1", "field2": "value2"},
+		},
+		{
+			name: "field with special characters in value",
+			body: "--boundary\r\n" +
+				"Content-Disposition: form-data; name=\"json\"\r\n\r\n" +
+				"{\"key\": \"value\"}\r\n" +
+				"--boundary--\r\n",
+			expected: map[string]string{"json": "{\"key\": \"value\"}"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := ParseBodyMultipartForm(tt.body)
+			if !reflect.DeepEqual(got, tt.expected) {
+				t.Errorf("ParseBodyMultipartForm() = %v, want %v", got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestPathToName(t *testing.T) {
+	tests := []struct {
+		name     string
+		path     string
+		expected string
+	}{
+		{
+			name:     "simple path",
+			path:     "api/users",
+			expected: "api-users",
+		},
+		{
+			name:     "path with single variable",
+			path:     "api/users/{{user_id}}",
+			expected: "api-users-USER_ID",
+		},
+		{
+			name:     "path with multiple variables",
+			path:     "api/{{org}}/users/{{user_id}}",
+			expected: "api-ORG-users-USER_ID",
+		},
+		{
+			name:     "path with simple variable",
+			path:     "api/items/{{id}}",
+			expected: "api-items-ID",
+		},
+		{
+			name:     "empty path",
+			path:     "",
+			expected: "",
+		},
+		{
+			name:     "single segment",
+			path:     "api",
+			expected: "api",
+		},
+		{
+			name:     "path with numbers",
+			path:     "api/v2/users",
+			expected: "api-v2-users",
+		},
+		{
+			name:     "nested path",
+			path:     "api/users/posts/comments",
+			expected: "api-users-posts-comments",
+		},
+		{
+			name:     "variable with underscore",
+			path:     "api/{{account_name}}/settings",
+			expected: "api-ACCOUNT_NAME-settings",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := pathToName(tt.path)
+			if got != tt.expected {
+				t.Errorf("pathToName(%q) = %q, want %q", tt.path, got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestParseRawRequest(t *testing.T) {
+	tests := []struct {
+		name       string
+		rawRequest string
+		wantMethod string
+		wantPath   string
+		wantHost   string
+		wantErr    bool
+	}{
+		{
+			name:       "simple GET request",
+			rawRequest: "GET /api/users HTTP/1.1\r\nHost: example.com\r\n\r\n",
+			wantMethod: "GET",
+			wantPath:   "/api/users",
+			wantHost:   "example.com",
+			wantErr:    false,
+		},
+		{
+			name:       "POST request with headers",
+			rawRequest: "POST /api/users HTTP/1.1\r\nHost: example.com\r\nContent-Type: application/json\r\n\r\n",
+			wantMethod: "POST",
+			wantPath:   "/api/users",
+			wantHost:   "example.com",
+			wantErr:    false,
+		},
+		{
+			name:       "request with comment lines",
+			rawRequest: "# This is a comment\n# Another comment\nGET /api/data HTTP/1.1\r\nHost: test.com\r\n\r\n",
+			wantMethod: "GET",
+			wantPath:   "/api/data",
+			wantHost:   "test.com",
+			wantErr:    false,
+		},
+		{
+			name:       "request with multiple comment lines",
+			rawRequest: "# Comment 1\n# Comment 2\n# Comment 3\nPUT /api/resource HTTP/1.1\r\nHost: api.example.com\r\n\r\n",
+			wantMethod: "PUT",
+			wantPath:   "/api/resource",
+			wantHost:   "api.example.com",
+			wantErr:    false,
+		},
+		{
+			name:       "DELETE request",
+			rawRequest: "DELETE /api/users/123 HTTP/1.1\r\nHost: example.com\r\n\r\n",
+			wantMethod: "DELETE",
+			wantPath:   "/api/users/123",
+			wantHost:   "example.com",
+			wantErr:    false,
+		},
+		{
+			name:       "request with query string",
+			rawRequest: "GET /api/search?q=test&page=1 HTTP/1.1\r\nHost: example.com\r\n\r\n",
+			wantMethod: "GET",
+			wantPath:   "/api/search",
+			wantHost:   "example.com",
+			wantErr:    false,
+		},
+		{
+			name:       "invalid request",
+			rawRequest: "INVALID REQUEST",
+			wantMethod: "",
+			wantPath:   "",
+			wantHost:   "",
+			wantErr:    true,
+		},
+		{
+			name:       "empty request",
+			rawRequest: "",
+			wantMethod: "",
+			wantPath:   "",
+			wantHost:   "",
+			wantErr:    true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req, err := ParseRawRequest([]byte(tt.rawRequest))
+			if (err != nil) != tt.wantErr {
+				t.Errorf("ParseRawRequest() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+			if err != nil {
+				return
+			}
+			if req.Method != tt.wantMethod {
+				t.Errorf("ParseRawRequest() method = %q, want %q", req.Method, tt.wantMethod)
+			}
+			if req.URL.Path != tt.wantPath {
+				t.Errorf("ParseRawRequest() path = %q, want %q", req.URL.Path, tt.wantPath)
+			}
+			if req.Host != tt.wantHost {
+				t.Errorf("ParseRawRequest() host = %q, want %q", req.Host, tt.wantHost)
+			}
+		})
+	}
+}
+
+func TestFindRequestFolder(t *testing.T) {
+	tests := []struct {
+		name            string
+		setupDirs       []string // directories to create
+		basedir         string
+		path            string
+		expectedDir     string
+		expectedRemains string
+	}{
+		{
+			name:            "empty path returns basedir",
+			setupDirs:       []string{},
+			basedir:         "",
+			path:            "",
+			expectedDir:     ".",
+			expectedRemains: "",
+		},
+		{
+			name:            "no matching folder returns basedir with full path",
+			setupDirs:       []string{},
+			basedir:         "",
+			path:            "api/users/123",
+			expectedDir:     ".",
+			expectedRemains: "api/users/123",
+		},
+		{
+			name:            "matching single folder",
+			setupDirs:       []string{"api"},
+			basedir:         "",
+			path:            "api/users/123",
+			expectedDir:     "api",
+			expectedRemains: "users/123",
+		},
+		{
+			name:            "matching nested folders",
+			setupDirs:       []string{"api", "api/users"},
+			basedir:         "",
+			path:            "api/users/123",
+			expectedDir:     "api/users",
+			expectedRemains: "123",
+		},
+		{
+			name:            "deep nested match",
+			setupDirs:       []string{"api", "api/v1", "api/v1/users"},
+			basedir:         "",
+			path:            "api/v1/users/posts/comments",
+			expectedDir:     "api/v1/users",
+			expectedRemains: "posts/comments",
+		},
+		{
+			name:            "path with leading slash",
+			setupDirs:       []string{"api"},
+			basedir:         "",
+			path:            "/api/users",
+			expectedDir:     "api",
+			expectedRemains: "users",
+		},
+		{
+			name:            "path with trailing slash",
+			setupDirs:       []string{"api"},
+			basedir:         "",
+			path:            "api/users/",
+			expectedDir:     "api",
+			expectedRemains: "users",
+		},
+		{
+			name:            "full path exists as folder",
+			setupDirs:       []string{"api", "api/users", "api/users/list"},
+			basedir:         "",
+			path:            "api/users/list",
+			expectedDir:     "api/users/list",
+			expectedRemains: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Create temp directory
+			tmpDir := t.TempDir()
+
+			// Setup directories
+			for _, dir := range tt.setupDirs {
+				err := os.MkdirAll(filepath.Join(tmpDir, dir), 0755)
+				if err != nil {
+					t.Fatalf("failed to create test directory %q: %v", dir, err)
+				}
+			}
+
+			// Determine basedir
+			basedir := tt.basedir
+			if basedir == "" {
+				basedir = tmpDir
+			} else {
+				basedir = filepath.Join(tmpDir, basedir)
+			}
+
+			// Determine expected directory
+			expectedDir := tt.expectedDir
+			if expectedDir == "." {
+				expectedDir = tmpDir
+			} else {
+				expectedDir = filepath.Join(tmpDir, expectedDir)
+			}
+
+			gotDir, gotRemains := findRequestFolder(basedir, tt.path)
+
+			if gotDir != expectedDir {
+				t.Errorf("findRequestFolder() dir = %q, want %q", gotDir, expectedDir)
+			}
+			if gotRemains != tt.expectedRemains {
+				t.Errorf("findRequestFolder() remains = %q, want %q", gotRemains, tt.expectedRemains)
+			}
+		})
+	}
+}
+
+func TestRequestBodyBlock(t *testing.T) {
+	tests := []struct {
+		name     string
+		rd       RequestData
+		contains []string // strings that should be in the output
+	}{
+		{
+			name: "json body",
+			rd: RequestData{
+				BodyType: "json",
+				Body:     `{"key": "value"}`,
+			},
+			contains: []string{"json {", `{"key": "value"}`},
+		},
+		{
+			name: "xml body",
+			rd: RequestData{
+				BodyType: "xml",
+				Body:     "<root><item>value</item></root>",
+			},
+			contains: []string{"xml {", "<root><item>value</item></root>"},
+		},
+		{
+			name: "text body",
+			rd: RequestData{
+				BodyType: "text",
+				Body:     "plain text content",
+			},
+			contains: []string{"text {", "plain text content"},
+		},
+		{
+			name: "formUrlEncoded body",
+			rd: RequestData{
+				BodyType: "formUrlEncoded",
+				Body:     "key1=value1&key2=value2",
+			},
+			contains: []string{"body:form-urlencoded {", "key1: value1", "key2: value2"},
+		},
+		{
+			name: "multipartForm body",
+			rd: RequestData{
+				BodyType: "multipartForm",
+				Body: "--boundary\r\n" +
+					"Content-Disposition: form-data; name=\"field1\"\r\n\r\n" +
+					"value1\r\n" +
+					"--boundary--\r\n",
+			},
+			contains: []string{"body:multipart-form {", "field1: value1"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := RequestBodyBlock(tt.rd)
+			for _, want := range tt.contains {
+				if !containsString(got, want) {
+					t.Errorf("RequestBodyBlock() = %q, should contain %q", got, want)
+				}
+			}
+		})
+	}
+}
+
+func TestRequestContent(t *testing.T) {
+	tests := []struct {
+		name     string
+		rd       RequestData
+		contains []string
+	}{
+		{
+			name: "basic GET request",
+			rd: RequestData{
+				Name:       "test-request",
+				FilesCount: 0,
+				Method:     "GET",
+				Path:       "/api/users",
+				BodyType:   "none",
+				Env: &BrunoEnv{
+					Vars: map[string]string{
+						"proto": "https",
+						"host":  "example.com",
+					},
+				},
+			},
+			contains: []string{
+				"meta {",
+				"name: test-request",
+				"seq: 1",
+				"type: http",
+				"get {",
+				"url: https://example.com/api/users",
+				"body: none",
+				"auth: none",
+				"settings {",
+				"encodeUrl: false",
+				"docs {",
+			},
+		},
+		{
+			name: "POST request with JSON body",
+			rd: RequestData{
+				Name:       "create-user",
+				FilesCount: 5,
+				Method:     "POST",
+				Path:       "/api/users",
+				BodyType:   "json",
+				Body:       `{"name": "John"}`,
+				Env: &BrunoEnv{
+					Vars: map[string]string{
+						"proto": "https",
+						"host":  "api.example.com",
+					},
+				},
+			},
+			contains: []string{
+				"meta {",
+				"name: create-user",
+				"seq: 6",
+				"post {",
+				"url: https://api.example.com/api/users",
+				"body: json",
+				"json {",
+				`{"name": "John"}`,
+			},
+		},
+		{
+			name: "request with query string",
+			rd: RequestData{
+				Name:       "search",
+				FilesCount: 0,
+				Method:     "GET",
+				Path:       "/api/search",
+				RawQuery:   "q=test&page=1",
+				BodyType:   "none",
+				Env: &BrunoEnv{
+					Vars: map[string]string{
+						"proto": "https",
+						"host":  "example.com",
+					},
+				},
+			},
+			contains: []string{
+				"url: https://example.com/api/search?q=test&page=1",
+			},
+		},
+		{
+			name: "request without env",
+			rd: RequestData{
+				Name:       "no-env",
+				FilesCount: 0,
+				Method:     "GET",
+				Path:       "/api/test",
+				BodyType:   "none",
+				Env:        nil,
+			},
+			contains: []string{
+				"url: ://",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := requestContent(tt.rd)
+			for _, want := range tt.contains {
+				if !containsString(got, want) {
+					t.Errorf("requestContent() should contain %q\ngot:\n%s", want, got)
+				}
+			}
+		})
+	}
+}
+
+// Helper function to check if a string contains a substring
+func containsString(s, substr string) bool {
+	return len(s) >= len(substr) && (s == substr || len(s) > 0 && containsSubstring(s, substr))
+}
+
+func containsSubstring(s, substr string) bool {
+	for i := 0; i <= len(s)-len(substr); i++ {
+		if s[i:i+len(substr)] == substr {
+			return true
+		}
+	}
+	return false
+}
