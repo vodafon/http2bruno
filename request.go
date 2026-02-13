@@ -26,6 +26,7 @@ type RequestData struct {
 	BodyType   string
 	Body       string
 	Env        *BrunoEnv
+	HTTPReq    *http.Request
 }
 
 // BodyTypeName returns the value for the `body:value block`.
@@ -98,6 +99,7 @@ func DoRequest(basedir, envfile string) error {
 		Path:     req.URL.Path,
 		RawQuery: req.URL.RawQuery,
 		Env:      envs,
+		HTTPReq:  req,
 	}
 
 	bodyBytes, err := io.ReadAll(req.Body)
@@ -162,6 +164,9 @@ func requestContent(rd RequestData) string {
 	if rd.Env != nil {
 		proto = rd.Env.Vars["proto"]
 		host = rd.Env.Vars["host"]
+	}
+	if host != rd.HTTPReq.Host {
+		fmt.Fprintf(os.Stderr, "[W] host mismatched. in envs - %s, in request - %s", host, rd.HTTPReq.Host)
 	}
 	rvars["url"] = fmt.Sprintf("%s://%s%s", proto, host, path)
 	rvars["body"] = rd.BodyType
