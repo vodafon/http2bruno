@@ -10,6 +10,8 @@ var (
 	flagOp         = flag.String("o", "request", "operaton. collection|folder|request")
 	flagCollection = flag.String("c", "", "collection name")
 	flagFolder     = flag.String("f", "", "folder name")
+	flagBaseDir    = flag.String("base", ".", "base collection folder for request")
+	flagEnvFile    = flag.String("e", "environments/base.bru", "environment file")
 )
 
 func main() {
@@ -22,12 +24,17 @@ func main() {
 			raiseError(err)
 		}
 	case "folder":
-		err := DoFolder(*flagFolder, ".")
+		err := DoFolder(*flagFolder, *flagBaseDir)
+		if err != nil {
+			raiseError(err)
+		}
+	case "request":
+		err := DoRequest(*flagBaseDir, *flagEnvFile)
 		if err != nil {
 			raiseError(err)
 		}
 	default:
-		raiseError(fmt.Errorf("Invalid -o flag: %q", *flagOp))
+		raiseError(fmt.Errorf("invalid -o flag: %q", *flagOp))
 	}
 }
 
