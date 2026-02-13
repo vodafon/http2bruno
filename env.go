@@ -36,9 +36,10 @@ func EnvToBody(body string, env *BrunoEnv) string {
 	for _, value := range keys {
 		varName := env.ReverseVars[value]
 		// Build a regex that matches the value only when not surrounded by alphanumeric characters
-		pattern := `(?:^|(?<=[^a-zA-Z0-9]))` + regexp.QuoteMeta(value) + `(?:$|(?=[^a-zA-Z0-9]))`
+		// Use capture groups instead of lookbehind/lookahead (not supported by Go's RE2)
+		pattern := `(^|[^a-zA-Z0-9])` + regexp.QuoteMeta(value) + `($|[^a-zA-Z0-9])`
 		re := regexp.MustCompile(pattern)
-		body = re.ReplaceAllString(body, "{{"+varName+"}}")
+		body = re.ReplaceAllString(body, `${1}{{`+varName+`}}${2}`)
 	}
 
 	return body
