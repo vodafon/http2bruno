@@ -123,7 +123,12 @@ func DoRequest(basedir, envfile string) error {
 func createRequestFile(rd RequestData) error {
 	dir, tail := findRequestFolder(rd.Basedir, rd.Path)
 	tail = EnvToPath(tail, rd.Env)
-	rd.Name = pathToName(tail) + "-" + rd.Method
+	name := pathToName(tail)
+	if name == "" {
+		rd.Name = rd.Method
+	} else {
+		rd.Name = name + "-" + rd.Method
+	}
 	rd.FilesCount = DirFilesCount(dir)
 	rd.Body = EnvToBody(rd.Body, rd.Env)
 

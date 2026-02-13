@@ -889,6 +889,99 @@ func TestCreateRequestFileWithBasedir(t *testing.T) {
 			expectedFile: "health-GET.bru",
 			wantErr:      false,
 		},
+
+		// Tests for exact folder match - filename should NOT have leading dash
+		{
+			name:      "path matches exact folder - should not have leading dash",
+			setupDirs: []string{"collection", "collection/api", "collection/api/app"},
+			basedir:   "collection",
+			rd: RequestData{
+				Method:   "GET",
+				Path:     "/api/app",
+				BodyType: "none",
+				Env: &BrunoEnv{
+					Vars: map[string]string{"proto": "https", "host": "example.com"},
+				},
+			},
+			expectedFile: "collection/api/app/GET.bru",
+			wantErr:      false,
+		},
+		{
+			name:      "path matches exact folder - POST method",
+			setupDirs: []string{"collection", "collection/api", "collection/api/users"},
+			basedir:   "collection",
+			rd: RequestData{
+				Method:   "POST",
+				Path:     "/api/users",
+				BodyType: "json",
+				Body:     `{"name": "test"}`,
+				Env: &BrunoEnv{
+					Vars: map[string]string{"proto": "https", "host": "example.com"},
+				},
+			},
+			expectedFile: "collection/api/users/POST.bru",
+			wantErr:      false,
+		},
+		{
+			name:      "single segment path matches folder",
+			setupDirs: []string{"collection", "collection/users"},
+			basedir:   "collection",
+			rd: RequestData{
+				Method:   "GET",
+				Path:     "/users",
+				BodyType: "none",
+				Env: &BrunoEnv{
+					Vars: map[string]string{"proto": "https", "host": "example.com"},
+				},
+			},
+			expectedFile: "collection/users/GET.bru",
+			wantErr:      false,
+		},
+		{
+			name:      "deeply nested path matches exact folder",
+			setupDirs: []string{"col", "col/api", "col/api/v1", "col/api/v1/users", "col/api/v1/users/profile"},
+			basedir:   "col",
+			rd: RequestData{
+				Method:   "DELETE",
+				Path:     "/api/v1/users/profile",
+				BodyType: "none",
+				Env: &BrunoEnv{
+					Vars: map[string]string{"proto": "https", "host": "example.com"},
+				},
+			},
+			expectedFile: "col/api/v1/users/profile/DELETE.bru",
+			wantErr:      false,
+		},
+		{
+			name:      "root path with basedir as exact match",
+			setupDirs: []string{"api"},
+			basedir:   "api",
+			rd: RequestData{
+				Method:   "GET",
+				Path:     "/",
+				BodyType: "none",
+				Env: &BrunoEnv{
+					Vars: map[string]string{"proto": "https", "host": "example.com"},
+				},
+			},
+			expectedFile: "api/GET.bru",
+			wantErr:      false,
+		},
+		{
+			name:      "path with trailing slash matches folder",
+			setupDirs: []string{"collection", "collection/api"},
+			basedir:   "collection",
+			rd: RequestData{
+				Method:   "GET",
+				Path:     "/api/",
+				BodyType: "none",
+				Env: &BrunoEnv{
+					Vars: map[string]string{"proto": "https", "host": "example.com"},
+				},
+			},
+			expectedFile: "collection/api/GET.bru",
+			wantErr:      false,
+		},
 	}
 
 	for _, tt := range tests {
