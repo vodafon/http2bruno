@@ -180,8 +180,8 @@ func requestContent(rd RequestData) string {
 	}
 	proto, host := "", ""
 	if rd.Env != nil {
-		proto = rd.Env.Vars["proto"]
-		host = rd.Env.Vars["host"]
+		proto = "{{proto}}"
+		host = "{{host}}"
 	}
 	if rd.HTTPReq != nil && host != rd.HTTPReq.Host {
 		fmt.Fprintf(os.Stderr, "[W] host mismatched. in envs - %s, in request - %s", host, rd.HTTPReq.Host)

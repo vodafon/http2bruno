@@ -567,7 +567,7 @@ func TestFindRequestFolder(t *testing.T) {
 
 			// Setup directories
 			for _, dir := range tt.setupDirs {
-				err := os.MkdirAll(filepath.Join(tmpDir, dir), 0755)
+				err := os.MkdirAll(filepath.Join(tmpDir, dir), 0o755)
 				if err != nil {
 					t.Fatalf("failed to create test directory %q: %v", dir, err)
 				}
@@ -691,7 +691,7 @@ func TestRequestContent(t *testing.T) {
 				"seq: 1",
 				"type: http",
 				"get {",
-				"url: https://example.com/api/users",
+				"url: {{proto}}://{{host}}/api/users",
 				"body: none",
 				"auth: none",
 				"settings {",
@@ -720,7 +720,7 @@ func TestRequestContent(t *testing.T) {
 				"name: create-user",
 				"seq: 6",
 				"post {",
-				"url: https://api.example.com/api/users",
+				"url: {{proto}}://{{host}}/api/users",
 				"body: json",
 				"json {",
 				`{"name": "John"}`,
@@ -743,7 +743,7 @@ func TestRequestContent(t *testing.T) {
 				},
 			},
 			contains: []string{
-				"url: https://example.com/api/search?q=test&page=1",
+				"url: {{proto}}://{{host}}/api/search?q=test&page=1",
 			},
 		},
 		{
@@ -774,7 +774,7 @@ func TestRequestContent(t *testing.T) {
 				},
 			},
 			contains: []string{
-				"url: https://example.com/users/{{user_id}}",
+				"url: {{proto}}://{{host}}/users/{{user_id}}",
 			},
 		},
 		{
@@ -792,7 +792,7 @@ func TestRequestContent(t *testing.T) {
 				},
 			},
 			contains: []string{
-				"url: https://example.com/api/search?user_id={{user_id}}&account={{account_id}}",
+				"url: {{proto}}://{{host}}/api/search?user_id={{user_id}}&account={{account_id}}",
 			},
 		},
 	}
@@ -1025,7 +1025,7 @@ func TestCreateRequestFileWithBasedir(t *testing.T) {
 
 			// Setup directories
 			for _, dir := range tt.setupDirs {
-				err := os.MkdirAll(filepath.Join(tmpDir, dir), 0755)
+				err := os.MkdirAll(filepath.Join(tmpDir, dir), 0o755)
 				if err != nil {
 					t.Fatalf("failed to create directory %q: %v", dir, err)
 				}
@@ -1081,7 +1081,7 @@ func TestCreateRequestFileBasedirNotSet(t *testing.T) {
 
 	// Create a subdirectory that should be the basedir
 	basedir := filepath.Join(tmpDir, "intended-basedir")
-	os.MkdirAll(basedir, 0755)
+	os.MkdirAll(basedir, 0o755)
 
 	// Create RequestData WITHOUT setting Basedir (simulating the bug in DoRequest)
 	rd := RequestData{
@@ -1155,14 +1155,14 @@ func TestDoRequestPassesBasedirToRequestData(t *testing.T) {
 	// Create basedir structure
 	basedir := filepath.Join(tmpDir, "my-collection")
 	envDir := filepath.Join(basedir, "environments")
-	os.MkdirAll(envDir, 0755)
+	os.MkdirAll(envDir, 0o755)
 
 	// Create environment file
 	envContent := `vars {
   proto: https
   host: example.com
 }`
-	os.WriteFile(filepath.Join(envDir, "base.bru"), []byte(envContent), 0644)
+	os.WriteFile(filepath.Join(envDir, "base.bru"), []byte(envContent), 0o644)
 
 	// Create a raw HTTP request
 	rawRequest := "GET /api/users HTTP/1.1\r\nHost: example.com\r\n\r\n"
@@ -1183,7 +1183,7 @@ func TestDoRequestPassesBasedirToRequestData(t *testing.T) {
 
 	// Change to a different directory (not basedir) to verify file is NOT created here
 	otherDir := filepath.Join(tmpDir, "other-dir")
-	os.MkdirAll(otherDir, 0755)
+	os.MkdirAll(otherDir, 0o755)
 	origDir, _ := os.Getwd()
 	os.Chdir(otherDir)
 	defer os.Chdir(origDir)
