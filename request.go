@@ -178,13 +178,14 @@ func requestContent(rd RequestData) string {
 		query := EnvToBody(rd.RawQuery, rd.Env)
 		path += "?" + query
 	}
-	proto, host := "", ""
+	proto, host, envHost := "", "", ""
 	if rd.Env != nil {
 		proto = "{{proto}}"
 		host = "{{host}}"
+		envHost = rd.Env.Vars["host"]
 	}
-	if rd.HTTPReq != nil && host != rd.HTTPReq.Host {
-		fmt.Fprintf(os.Stderr, "[W] host mismatched. in envs - %s, in request - %s", host, rd.HTTPReq.Host)
+	if rd.HTTPReq != nil && envHost != "" && envHost != rd.HTTPReq.Host {
+		fmt.Fprintf(os.Stderr, "[W] host mismatched. in envs - %s, in request - %s", envHost, rd.HTTPReq.Host)
 	}
 	rvars["url"] = fmt.Sprintf("%s://%s%s", proto, host, path)
 	rvars["body"] = rd.BodyType
