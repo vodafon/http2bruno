@@ -88,6 +88,11 @@ func DoRequest(basedir, envfile string) error {
 	}
 	defer req.Body.Close()
 
+	basedir, err = findCollectionDir(basedir, req.Host)
+	if err != nil {
+		return fmt.Errorf("find collection dir error %w", err)
+	}
+
 	envs, err := EnvFromFile(filepath.Join(basedir, envfile))
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "[W] read env file: %s", err)
@@ -310,6 +315,29 @@ func pathToName(path string) string {
 	})
 
 	return result
+}
+
+// findCollectionDir locates the Bruno collection directory.
+// It checks if basedir contains bruno.json — if yes, returns basedir.
+// If not, it looks for a subfolder named after the lowercase request host
+// (e.g. "api1.example.com"). If that subfolder exists, it rechecks for
+// bruno.json there. Returns an error if no collection directory is found.
+func findCollectionDir(basedir, host string) (string, error) {
+	brunoJSON := filepath.Join(basedir, "bruno.json")
+	if _, err := os.Stat(brunoJSON); err == nil {
+		return basedir, nil
+	}
+
+	hostDir := filepath.Join(basedir, strings.ToLower(host))
+	if info, err := os.Stat(hostDir); err == nil && info.IsDir() {
+		brunoJSON = filepath.Join(hostDir, "bruno.json")
+		if _, err := os.Stat(brunoJSON); err == nil {
+			return hostDir, nil
+		}
+		return "", fmt.Errorf("collection dir %q found but missing bruno.json", hostDir)
+	}
+
+	return "", fmt.Errorf("collection not found: no bruno.json in %q and no %q subfolder", basedir, strings.ToLower(host))
 }
 
 // findRequestFolder detects Bruno subfolders for a request.

@@ -823,6 +823,112 @@ func containsSubstring(s, substr string) bool {
 	return false
 }
 
+func TestFindCollectionDir(t *testing.T) {
+	tests := []struct {
+		name      string
+		setupDirs []string
+		files     map[string]string // relative path -> content
+		basedir   string
+		host      string
+		expected  string
+		wantErr   bool
+	}{
+		{
+			name:      "bruno.json in basedir",
+			setupDirs: []string{"myproject"},
+			files:     map[string]string{"myproject/bruno.json": `{"version":"1"}`},
+			basedir:   "myproject",
+			host:      "api.example.com",
+			expected:  "myproject",
+			wantErr:   false,
+		},
+		{
+			name:      "bruno.json in host subfolder",
+			setupDirs: []string{"base", "base/api.example.com"},
+			files:     map[string]string{"base/api.example.com/bruno.json": `{"version":"1"}`},
+			basedir:   "base",
+			host:      "api.example.com",
+			expected:  "base/api.example.com",
+			wantErr:   false,
+		},
+		{
+			name:      "host subfolder exists but no bruno.json",
+			setupDirs: []string{"base", "base/api.example.com"},
+			files:     map[string]string{},
+			basedir:   "base",
+			host:      "api.example.com",
+			expected:  "",
+			wantErr:   true,
+		},
+		{
+			name:      "no bruno.json anywhere and no host subfolder",
+			setupDirs: []string{"base"},
+			files:     map[string]string{},
+			basedir:   "base",
+			host:      "api.example.com",
+			expected:  "",
+			wantErr:   true,
+		},
+		{
+			name:      "host with uppercase is lowercased",
+			setupDirs: []string{"base", "base/api.example.com"},
+			files:     map[string]string{"base/api.example.com/bruno.json": `{"version":"1"}`},
+			basedir:   "base",
+			host:      "API.Example.COM",
+			expected:  "base/api.example.com",
+			wantErr:   false,
+		},
+		{
+			name:      "bruno.json in basedir takes priority over host subfolder",
+			setupDirs: []string{"base", "base/api.example.com"},
+			files: map[string]string{
+				"base/bruno.json":                 `{"version":"1"}`,
+				"base/api.example.com/bruno.json": `{"version":"1"}`,
+			},
+			basedir:  "base",
+			host:     "api.example.com",
+			expected: "base",
+			wantErr:  false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tmpDir := t.TempDir()
+
+			for _, dir := range tt.setupDirs {
+				err := os.MkdirAll(filepath.Join(tmpDir, dir), 0o755)
+				if err != nil {
+					t.Fatalf("failed to create directory %q: %v", dir, err)
+				}
+			}
+
+			for path, content := range tt.files {
+				err := os.WriteFile(filepath.Join(tmpDir, path), []byte(content), 0o644)
+				if err != nil {
+					t.Fatalf("failed to create file %q: %v", path, err)
+				}
+			}
+
+			basedir := filepath.Join(tmpDir, tt.basedir)
+			got, err := findCollectionDir(basedir, tt.host)
+
+			if (err != nil) != tt.wantErr {
+				t.Errorf("findCollectionDir() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+			if tt.wantErr {
+				return
+			}
+
+			expected := filepath.Join(tmpDir, tt.expected)
+			if got != expected {
+				t.Errorf("findCollectionDir() = %q, want %q", got, expected)
+			}
+		})
+	}
+}
+
 func TestCreateRequestFileWithBasedir(t *testing.T) {
 	tests := []struct {
 		name         string
@@ -1129,35 +1235,15 @@ func TestCreateRequestFileBasedirNotSet(t *testing.T) {
 	os.Remove(buggyPath)
 }
 
-// TestDoRequestPassesBasedirToRequestData tests that DoRequest properly passes
-// the basedir parameter to RequestData. This test will FAIL until the bug is fixed.
-//
-// The bug: In DoRequest(), the RequestData struct is created without setting Basedir:
-//
-//	rd := RequestData{
-//	    Method:   req.Method,
-//	    Path:     req.URL.Path,
-//	    RawQuery: req.URL.RawQuery,
-//	    Env:      envs,
-//	    // Basedir is MISSING!
-//	}
-//
-// It should be:
-//
-//	rd := RequestData{
-//	    Basedir:  basedir,  // <-- ADD THIS
-//	    Method:   req.Method,
-//	    ...
-//	}
 func TestDoRequestPassesBasedirToRequestData(t *testing.T) {
 	tmpDir := t.TempDir()
 
-	// Create basedir structure
 	basedir := filepath.Join(tmpDir, "my-collection")
 	envDir := filepath.Join(basedir, "environments")
 	os.MkdirAll(envDir, 0o755)
 
-	// Create environment file
+	os.WriteFile(filepath.Join(basedir, "bruno.json"), []byte(`{"version":"1"}`), 0o644)
+
 	envContent := `vars {
   proto: https
   host: example.com
@@ -1194,37 +1280,14 @@ func TestDoRequestPassesBasedirToRequestData(t *testing.T) {
 		t.Fatalf("DoRequest() error = %v", err)
 	}
 
-	// The file SHOULD be created in basedir, NOT in current directory (otherDir)
 	expectedInBasedir := filepath.Join(basedir, "api-users-GET.bru")
 	wrongInCurrentDir := filepath.Join(otherDir, "api-users-GET.bru")
 
-	basedirExists := false
-	if _, err := os.Stat(expectedInBasedir); err == nil {
-		basedirExists = true
-	}
-
-	currentDirExists := false
-	if _, err := os.Stat(wrongInCurrentDir); err == nil {
-		currentDirExists = true
-	}
-
-	// This assertion will FAIL until the bug is fixed
-	if !basedirExists {
+	if _, err := os.Stat(expectedInBasedir); os.IsNotExist(err) {
 		t.Errorf("File should be created in basedir %q but wasn't", expectedInBasedir)
 	}
 
-	if currentDirExists {
-		t.Errorf("BUG: File was created in current directory %q instead of basedir", wrongInCurrentDir)
+	if _, err := os.Stat(wrongInCurrentDir); err == nil {
+		t.Errorf("File was created in current directory %q instead of basedir", wrongInCurrentDir)
 	}
-
-	// List all files for debugging
-	var allFiles []string
-	filepath.Walk(tmpDir, func(path string, info os.FileInfo, err error) error {
-		if !info.IsDir() && filepath.Ext(path) == ".bru" {
-			rel, _ := filepath.Rel(tmpDir, path)
-			allFiles = append(allFiles, rel)
-		}
-		return nil
-	})
-	t.Logf("All .bru files created: %v", allFiles)
 }
