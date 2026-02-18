@@ -223,7 +223,7 @@ func RequestBodyBlock(rd RequestData) string {
 	if rd.BodyType == "multipartForm" {
 		return RequestBodyMultipartForm(rd)
 	}
-	return NameBlockStrings(rd.BodyType, []string{rd.Body})
+	return NameBlockStrings("body:"+rd.BodyType, []string{rd.Body})
 }
 
 func RequestBodyUrlEncoded(rd RequestData) string {
