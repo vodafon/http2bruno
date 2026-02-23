@@ -397,10 +397,10 @@ func findRequestFolder(basedir string, path string) (string, string) {
 }
 
 // ParseRawRequest takes a raw HTTP request as []byte and returns a parsed *http.Request and error.
+// It reads the body independently of the Content-Length header, capturing any
+// content after the header section regardless of whether Content-Length is set.
 func ParseRawRequest(rawRequest []byte) (*http.Request, error) {
 	reader := bufio.NewReader(bytes.NewReader(rawRequest))
-
-	// Skip lines starting with '#' (meta lines)
 	for {
 		line, err := reader.Peek(1)
 		if err != nil {
@@ -415,10 +415,28 @@ func ParseRawRequest(rawRequest []byte) (*http.Request, error) {
 			return nil, err
 		}
 	}
-
 	req, err := http.ReadRequest(reader)
 	if err != nil {
 		return nil, err
+	}
+
+	// http.ReadRequest uses Content-Length to determine how many body bytes to
+	// read. When Content-Length is absent, req.Body may be empty even though
+	// there is body content after the headers. Read any remaining data from
+	// the reader and use it as the body when the parsed body is empty.
+	remaining, err := io.ReadAll(reader)
+	if err != nil {
+		return nil, fmt.Errorf("read remaining body: %w", err)
+	}
+
+	if len(remaining) > 0 {
+		// Close the original body before replacing
+		req.Body.Close()
+		// If http.ReadRequest already read some body (Content-Length was set),
+		// that content won't appear in remaining. If Content-Length was missing,
+		// the full body is in remaining.
+		req.Body = io.NopCloser(bytes.NewReader(remaining))
+		req.ContentLength = int64(len(remaining))
 	}
 	return req, nil
 }

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"io"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -390,6 +391,60 @@ func TestParseRawRequest(t *testing.T) {
 			}
 			if req.Host != tt.wantHost {
 				t.Errorf("ParseRawRequest() host = %q, want %q", req.Host, tt.wantHost)
+			}
+		})
+	}
+}
+
+func TestParseRawRequestBody(t *testing.T) {
+	tests := []struct {
+		name     string
+		raw      string
+		wantBody string
+	}{
+		{
+			name:     "body with Content-Length header",
+			raw:      "POST /api/users HTTP/1.1\r\nHost: example.com\r\nContent-Type: application/json\r\nContent-Length: 16\r\n\r\n{\"name\": \"John\"}",
+			wantBody: "{\"name\": \"John\"}",
+		},
+		{
+			name:     "body without Content-Length header",
+			raw:      "POST /api/users HTTP/1.1\r\nHost: example.com\r\nContent-Type: application/json\r\n\r\n{\"name\": \"John\"}",
+			wantBody: "{\"name\": \"John\"}",
+		},
+		{
+			name:     "empty body without Content-Length",
+			raw:      "GET /api/users HTTP/1.1\r\nHost: example.com\r\n\r\n",
+			wantBody: "",
+		},
+		{
+			name:     "multiline body without Content-Length",
+			raw:      "POST /api/data HTTP/1.1\r\nHost: example.com\r\nContent-Type: text/plain\r\n\r\nline1\r\nline2\r\nline3",
+			wantBody: "line1\r\nline2\r\nline3",
+		},
+		{
+			name:     "form body without Content-Length",
+			raw:      "POST /api/login HTTP/1.1\r\nHost: example.com\r\nContent-Type: application/x-www-form-urlencoded\r\n\r\nuser=admin&pass=secret",
+			wantBody: "user=admin&pass=secret",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req, err := ParseRawRequest([]byte(tt.raw))
+			if err != nil {
+				t.Fatalf("ParseRawRequest() error = %v", err)
+			}
+			defer req.Body.Close()
+
+			body, err := io.ReadAll(req.Body)
+			if err != nil {
+				t.Fatalf("ReadAll(req.Body) error = %v", err)
+			}
+
+			got := string(body)
+			if got != tt.wantBody {
+				t.Errorf("ParseRawRequest() body = %q, want %q", got, tt.wantBody)
 			}
 		})
 	}
