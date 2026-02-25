@@ -450,6 +450,90 @@ func TestParseRawRequestBody(t *testing.T) {
 	}
 }
 
+func TestWhitespaceOnlyBodyTreatedAsEmpty(t *testing.T) {
+	tests := []struct {
+		name string
+		raw  string
+	}{
+		{
+			name: "body with only newline",
+			raw:  "POST /api/login HTTP/1.1\r\nHost: example.com\r\nContent-Type: application/x-www-form-urlencoded\r\n\r\n\n",
+		},
+		{
+			name: "body with only carriage return and newline",
+			raw:  "POST /api/login HTTP/1.1\r\nHost: example.com\r\nContent-Type: application/x-www-form-urlencoded\r\n\r\n\r\n",
+		},
+		{
+			name: "body with only spaces",
+			raw:  "POST /api/login HTTP/1.1\r\nHost: example.com\r\nContent-Type: application/x-www-form-urlencoded\r\n\r\n   ",
+		},
+		{
+			name: "body with mixed whitespace",
+			raw:  "POST /api/login HTTP/1.1\r\nHost: example.com\r\nContent-Type: application/x-www-form-urlencoded\r\n\r\n \r\n \n \t",
+		},
+		{
+			name: "body with multiple newlines",
+			raw:  "POST /api/login HTTP/1.1\r\nHost: example.com\r\nContent-Type: application/json\r\n\r\n\n\n\n",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tmpDir := t.TempDir()
+			basedir := tmpDir
+			os.WriteFile(filepath.Join(basedir, "bruno.json"), []byte(`{"version":"1"}`), 0o644)
+			envDir := filepath.Join(basedir, "environments")
+			os.MkdirAll(envDir, 0o755)
+			envContent := "vars {\n  proto: https\n  host: example.com\n}"
+			os.WriteFile(filepath.Join(envDir, "base.bru"), []byte(envContent), 0o644)
+
+			origStdin := os.Stdin
+			defer func() { os.Stdin = origStdin }()
+
+			r, w, _ := os.Pipe()
+			os.Stdin = r
+			go func() {
+				w.Write([]byte(tt.raw))
+				w.Close()
+			}()
+
+			err := DoRequest(basedir, "environments/base.bru")
+			if err != nil {
+				t.Fatalf("DoRequest() error = %v", err)
+			}
+
+			// Find the created .bru file
+			matches, _ := filepath.Glob(filepath.Join(tmpDir, "*.bru"))
+			var bruFile string
+			for _, m := range matches {
+				if filepath.Base(m) != "bruno.json" {
+					bruFile = m
+					break
+				}
+			}
+			if bruFile == "" {
+				t.Fatal("no .bru file created")
+			}
+
+			content, err := os.ReadFile(bruFile)
+			if err != nil {
+				t.Fatalf("read .bru file error: %v", err)
+			}
+
+			got := string(content)
+			if containsString(got, "body:form-urlencoded") {
+				t.Errorf("whitespace-only body should not generate body:form-urlencoded block\ngot:\n%s", got)
+			}
+			if containsString(got, "body:json") {
+				t.Errorf("whitespace-only body should not generate body:json block\ngot:\n%s", got)
+			}
+			if !containsString(got, "body: none") {
+				t.Errorf("whitespace-only body should have body: none\ngot:\n%s", got)
+			}
+		})
+	}
+}
+
 func TestFindRequestFolder(t *testing.T) {
 	tests := []struct {
 		name            string
@@ -850,8 +934,28 @@ func TestRequestContent(t *testing.T) {
 				"url: {{proto}}://{{host}}/api/search?user_id={{user_id}}&account={{account_id}}",
 			},
 		},
+		{
+			name: "request with whitespace-only body treated as no body",
+			rd: RequestData{
+				Name:       "whitespace-body",
+				FilesCount: 0,
+				Method:     "POST",
+				Path:       "/api/data",
+				BodyType:   "none",
+				Body:       "",
+				Env: &BrunoEnv{
+					Vars: map[string]string{
+						"proto": "https",
+						"host":  "example.com",
+					},
+				},
+			},
+			contains: []string{
+				"body: none",
+				"docs {",
+			},
+		},
 	}
-
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := requestContent(tt.rd)

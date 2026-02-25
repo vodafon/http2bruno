@@ -113,13 +113,14 @@ func DoRequest(basedir, envfile string) error {
 	}
 	rd.Body = string(bodyBytes)
 
-	if rd.Body != "" {
+	if strings.TrimSpace(rd.Body) != "" {
 		rd.BodyType, err = BodyTypeFromContentType(req.Header.Get("Content-Type"))
 		if err != nil {
 			return fmt.Errorf("detect bodytype error %w", err)
 		}
 	} else {
 		rd.BodyType = "none"
+		rd.Body = ""
 	}
 
 	err = createRequestFile(rd)
