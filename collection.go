@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 )
 
 type BrunoJSON struct {
@@ -43,8 +44,14 @@ func DefaultBrunoJSON(name string) string {
 //	  User-Agent: {{ua}}
 //	}
 func DefaultCollectionBru() string {
-	mp := make(map[string]string)
-	mp["User-Agent"] = "{{ua}}"
+	heads := make(map[string]string)
+	heads["User-Agent"] = "{{ua}}"
+	heads["Cookie"] = "{{cook}}"
+	heads["Authorization"] = "Bearer {{token}}"
 
-	return HeadersGenerate(mp)
+	var sb strings.Builder
+	sb.WriteString(HeadersGenerate(heads))
+	sb.WriteString("\n")
+	sb.WriteString(NameBlockStrings("script:pre-request", []string{"req.setMaxRedirects(0);"}))
+	return sb.String()
 }

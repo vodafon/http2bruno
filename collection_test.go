@@ -130,6 +130,24 @@ func TestDefaultCollectionBru(t *testing.T) {
 		t.Error("DefaultCollectionBru() should contain 'User-Agent: {{ua}}'")
 	}
 
+	// Should contain Cookie header
+	if !strings.Contains(got, "Cookie: {{cook}}") {
+		t.Error("DefaultCollectionBru() should contain 'Cookie: {{cook}}'")
+	}
+
+	// Should contain Authorization header with Bearer scheme
+	if !strings.Contains(got, "Authorization: Bearer {{token}}") {
+		t.Error("DefaultCollectionBru() should contain 'Authorization: Bearer {{token}}'")
+	}
+
+	// Should contain pre-request script for redirects
+	if !strings.Contains(got, "script:pre-request {") {
+		t.Error("DefaultCollectionBru() should contain 'script:pre-request {'")
+	}
+	if !strings.Contains(got, "req.setMaxRedirects(0);") {
+		t.Error("DefaultCollectionBru() should contain 'req.setMaxRedirects(0);'")
+	}
+
 	// Should end with closing brace
 	if !strings.HasSuffix(got, "}\n") {
 		t.Error("DefaultCollectionBru() should end with '}\\n'")

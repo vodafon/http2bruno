@@ -241,8 +241,8 @@ func TestDoFolderFileContents(t *testing.T) {
 	if !strings.Contains(bruStr, "name: my-folder") {
 		t.Error("folder.bru should contain folder name in meta")
 	}
-	if !strings.Contains(bruStr, "headers {") {
-		t.Error("folder.bru should contain headers block")
+	if strings.Contains(bruStr, "headers {") {
+		t.Error("folder.bru should not contain headers block (moved to collection)")
 	}
 }
 

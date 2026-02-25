@@ -11,35 +11,30 @@ func TestDefaultFolderBru(t *testing.T) {
 		folderName string
 		contains   []string
 	}{
-		{
-			name:       "basic folder",
-			folderName: "api",
-			contains: []string{
-				"meta {",
-				"name: api",
-				"headers {",
-				"Cookie: {{cook}}",
-				"Authorization: Bearer {{token}}",
-			},
+	{
+		name:       "basic folder",
+		folderName: "api",
+		contains: []string{
+			"meta {",
+			"name: api",
 		},
-		{
-			name:       "folder with special chars",
-			folderName: "users-v2",
-			contains: []string{
-				"meta {",
-				"name: users-v2",
-				"headers {",
-			},
+	},
+	{
+		name:       "folder with special chars",
+		folderName: "users-v2",
+		contains: []string{
+			"meta {",
+			"name: users-v2",
 		},
-		{
-			name:       "empty folder name",
-			folderName: "",
-			contains: []string{
-				"meta {",
-				"name:",
-				"headers {",
-			},
+	},
+	{
+		name:       "empty folder name",
+		folderName: "",
+		contains: []string{
+			"meta {",
+			"name:",
 		},
+	},
 	}
 
 	for _, tt := range tests {
@@ -58,52 +53,28 @@ func TestDefaultFolderBru(t *testing.T) {
 func TestDefaultFolderBruStructure(t *testing.T) {
 	got := DefaultFolderBru("test")
 
-	// Should have meta block before headers block
+	// Should have meta block
 	metaIdx := strings.Index(got, "meta {")
-	headersIdx := strings.Index(got, "headers {")
 
 	if metaIdx == -1 {
 		t.Error("DefaultFolderBru() should contain 'meta {'")
 	}
-	if headersIdx == -1 {
-		t.Error("DefaultFolderBru() should contain 'headers {'")
-	}
-	if metaIdx > headersIdx {
-		t.Error("DefaultFolderBru() meta block should come before headers block")
+
+	// Should NOT have headers block (moved to collection)
+	headersIdx := strings.Index(got, "headers {")
+	if headersIdx != -1 {
+		t.Error("DefaultFolderBru() should not contain 'headers {' (moved to collection)")
 	}
 }
 
-func TestDefaultFolderBruHeaders(t *testing.T) {
+func TestDefaultFolderBruNoHeaders(t *testing.T) {
 	got := DefaultFolderBru("test")
 
-	// Should have both Cookie and Authorization headers
-	if !strings.Contains(got, "Cookie:") {
-		t.Error("DefaultFolderBru() should contain Cookie header")
+	// Should NOT have Cookie or Authorization headers (moved to collection)
+	if strings.Contains(got, "Cookie:") {
+		t.Error("DefaultFolderBru() should not contain Cookie header (moved to collection)")
 	}
-	if !strings.Contains(got, "Authorization:") {
-		t.Error("DefaultFolderBru() should contain Authorization header")
-	}
-
-	// Should use template variables
-	if !strings.Contains(got, "{{cook}}") {
-		t.Error("DefaultFolderBru() should use {{cook}} template variable")
-	}
-	if !strings.Contains(got, "{{token}}") {
-		t.Error("DefaultFolderBru() should use {{token}} template variable")
-	}
-
-	// Authorization should use Bearer scheme
-	if !strings.Contains(got, "Bearer {{token}}") {
-		t.Error("DefaultFolderBru() should use Bearer scheme for Authorization")
-	}
-}
-
-func TestDefaultFolderBruNewline(t *testing.T) {
-	got := DefaultFolderBru("test")
-
-	// Should have a newline between meta and headers blocks
-	// The structure is: meta { ... }\n\nheaders { ... }
-	if !strings.Contains(got, "}\n\nheaders") {
-		t.Error("DefaultFolderBru() should have empty line between meta and headers blocks")
+	if strings.Contains(got, "Authorization:") {
+		t.Error("DefaultFolderBru() should not contain Authorization header (moved to collection)")
 	}
 }
