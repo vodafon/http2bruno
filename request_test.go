@@ -1394,6 +1394,275 @@ func TestCreateRequestFileBasedirNotSet(t *testing.T) {
 	os.Remove(buggyPath)
 }
 
+func TestParseH2RawRequest(t *testing.T) {
+	tests := []struct {
+		name       string
+		rawRequest string
+		wantMethod string
+		wantPath   string
+		wantHost   string
+		wantQuery  string
+		wantErr    bool
+	}{
+		{
+			name:       "simple GET request HTTP/2",
+			rawRequest: "GET /api/users HTTP/2\nHost: example.com\n\n",
+			wantMethod: "GET",
+			wantPath:   "/api/users",
+			wantHost:   "example.com",
+			wantErr:    false,
+		},
+		{
+			name:       "POST request with headers HTTP/2",
+			rawRequest: "POST /api/users HTTP/2\nHost: example.com\ncontent-type: application/json\n\n{\"name\":\"John\"}",
+			wantMethod: "POST",
+			wantPath:   "/api/users",
+			wantHost:   "example.com",
+			wantErr:    false,
+		},
+		{
+			name:       "PUT request HTTP/2",
+			rawRequest: "PUT /api/resource/123 HTTP/2\nHost: api.example.com\ncontent-type: application/json\n\n{\"key\":\"value\"}",
+			wantMethod: "PUT",
+			wantPath:   "/api/resource/123",
+			wantHost:   "api.example.com",
+			wantErr:    false,
+		},
+		{
+			name:       "DELETE request HTTP/2",
+			rawRequest: "DELETE /api/users/456 HTTP/2\nHost: example.com\n\n",
+			wantMethod: "DELETE",
+			wantPath:   "/api/users/456",
+			wantHost:   "example.com",
+			wantErr:    false,
+		},
+		{
+			name:       "request with query string HTTP/2",
+			rawRequest: "GET /api/search?q=test&page=1 HTTP/2\nHost: example.com\n\n",
+			wantMethod: "GET",
+			wantPath:   "/api/search",
+			wantHost:   "example.com",
+			wantQuery:  "q=test&page=1",
+			wantErr:    false,
+		},
+		{
+			name:       "request with overrides section",
+			rawRequest: "GET /api/data HTTP/2\nHost: example.com\n\n\n\n#!prook-h2-overrides\n@request\nstream_id: 1\n@end\n",
+			wantMethod: "GET",
+			wantPath:   "/api/data",
+			wantHost:   "example.com",
+			wantErr:    false,
+		},
+		{
+			name:       "invalid request missing method",
+			rawRequest: "not a valid request",
+			wantErr:    true,
+		},
+		{
+			name:       "empty request",
+			rawRequest: "",
+			wantErr:    true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req, err := ParseH2RawRequest([]byte(tt.rawRequest))
+			if (err != nil) != tt.wantErr {
+				t.Errorf("ParseH2RawRequest() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+			if err != nil {
+				return
+			}
+			if req.Method != tt.wantMethod {
+				t.Errorf("ParseH2RawRequest() method = %q, want %q", req.Method, tt.wantMethod)
+			}
+			if req.URL.Path != tt.wantPath {
+				t.Errorf("ParseH2RawRequest() path = %q, want %q", req.URL.Path, tt.wantPath)
+			}
+			if req.Host != tt.wantHost {
+				t.Errorf("ParseH2RawRequest() host = %q, want %q", req.Host, tt.wantHost)
+			}
+			if tt.wantQuery != "" && req.URL.RawQuery != tt.wantQuery {
+				t.Errorf("ParseH2RawRequest() query = %q, want %q", req.URL.RawQuery, tt.wantQuery)
+			}
+		})
+	}
+}
+
+func TestParseH2RawRequestBody(t *testing.T) {
+	tests := []struct {
+		name     string
+		raw      string
+		wantBody string
+	}{
+		{
+			name:     "POST with JSON body HTTP/2",
+			raw:      "POST /api/users HTTP/2\nHost: example.com\ncontent-type: application/json\n\n{\"name\": \"John\"}",
+			wantBody: "{\"name\": \"John\"}",
+		},
+		{
+			name:     "POST with form body HTTP/2",
+			raw:      "POST /api/login HTTP/2\nHost: example.com\ncontent-type: application/x-www-form-urlencoded\n\nuser=admin&pass=secret",
+			wantBody: "user=admin&pass=secret",
+		},
+		{
+			name:     "GET with no body HTTP/2",
+			raw:      "GET /api/users HTTP/2\nHost: example.com\n\n",
+			wantBody: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req, err := ParseH2RawRequest([]byte(tt.raw))
+			if err != nil {
+				t.Fatalf("ParseH2RawRequest() error = %v", err)
+			}
+			defer req.Body.Close()
+
+			body, err := io.ReadAll(req.Body)
+			if err != nil {
+				t.Fatalf("ReadAll(req.Body) error = %v", err)
+			}
+
+			got := string(body)
+			if got != tt.wantBody {
+				t.Errorf("ParseH2RawRequest() body = %q, want %q", got, tt.wantBody)
+			}
+		})
+	}
+}
+
+func TestParseH2RawRequestHeaders(t *testing.T) {
+	raw := "GET /api HTTP/2\nHost: example.com\ncontent-type: application/json\nauthorization: Bearer token123\nx-custom: value\n\n"
+
+	req, err := ParseH2RawRequest([]byte(raw))
+	if err != nil {
+		t.Fatalf("ParseH2RawRequest() error = %v", err)
+	}
+
+	wantHeaders := map[string]string{
+		"Content-Type":  "application/json",
+		"Authorization": "Bearer token123",
+		"X-Custom":      "value",
+	}
+
+	for name, want := range wantHeaders {
+		got := req.Header.Get(name)
+		if got != want {
+			t.Errorf("Header %q = %q, want %q", name, got, want)
+		}
+	}
+}
+
+func TestDoRequestH2(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	basedir := tmpDir
+	envDir := filepath.Join(basedir, "environments")
+	os.MkdirAll(envDir, 0o755)
+
+	os.WriteFile(filepath.Join(basedir, "bruno.json"), []byte(`{"version":"1"}`), 0o644)
+
+	envContent := "vars {\n  proto: https\n  host: example.com\n}"
+	os.WriteFile(filepath.Join(envDir, "base.bru"), []byte(envContent), 0o644)
+
+	rawRequest := "GET /api/users HTTP/2\nHost: example.com\n\n"
+
+	origStdin := os.Stdin
+	defer func() { os.Stdin = origStdin }()
+
+	r, w, _ := os.Pipe()
+	os.Stdin = r
+
+	go func() {
+		w.Write([]byte(rawRequest))
+		w.Close()
+	}()
+
+	err := DoRequest(basedir, "environments/base.bru")
+	if err != nil {
+		t.Fatalf("DoRequest() error = %v", err)
+	}
+
+	expectedFile := filepath.Join(basedir, "api-users-GET.bru")
+	if _, err := os.Stat(expectedFile); os.IsNotExist(err) {
+		t.Fatalf("Expected file %q was not created", expectedFile)
+	}
+
+	content, err := os.ReadFile(expectedFile)
+	if err != nil {
+		t.Fatalf("read .bru file error: %v", err)
+	}
+
+	got := string(content)
+	wantContains := []string{
+		"meta {",
+		"name: api-users-GET",
+		"type: http",
+		"get {",
+		"url: {{proto}}://{{host}}/api/users",
+		"body: none",
+	}
+	for _, want := range wantContains {
+		if !containsString(got, want) {
+			t.Errorf("DoRequest() H2 .bru file should contain %q\ngot:\n%s", want, got)
+		}
+	}
+}
+
+func TestDoRequestH2WithBody(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	basedir := tmpDir
+	envDir := filepath.Join(basedir, "environments")
+	os.MkdirAll(envDir, 0o755)
+
+	os.WriteFile(filepath.Join(basedir, "bruno.json"), []byte(`{"version":"1"}`), 0o644)
+
+	envContent := "vars {\n  proto: https\n  host: example.com\n}"
+	os.WriteFile(filepath.Join(envDir, "base.bru"), []byte(envContent), 0o644)
+
+	rawRequest := "POST /api/users HTTP/2\nHost: example.com\ncontent-type: application/json\n\n{\"name\": \"John\"}"
+
+	origStdin := os.Stdin
+	defer func() { os.Stdin = origStdin }()
+
+	r, w, _ := os.Pipe()
+	os.Stdin = r
+
+	go func() {
+		w.Write([]byte(rawRequest))
+		w.Close()
+	}()
+
+	err := DoRequest(basedir, "environments/base.bru")
+	if err != nil {
+		t.Fatalf("DoRequest() error = %v", err)
+	}
+
+	expectedFile := filepath.Join(basedir, "api-users-POST.bru")
+	content, err := os.ReadFile(expectedFile)
+	if err != nil {
+		t.Fatalf("read .bru file error: %v", err)
+	}
+
+	got := string(content)
+	wantContains := []string{
+		"post {",
+		"body: json",
+		"body:json {",
+		`{"name": "John"}`,
+	}
+	for _, want := range wantContains {
+		if !containsString(got, want) {
+			t.Errorf("DoRequest() H2 POST .bru file should contain %q\ngot:\n%s", want, got)
+		}
+	}
+}
+
 func TestDoRequestPassesBasedirToRequestData(t *testing.T) {
 	tmpDir := t.TempDir()
 

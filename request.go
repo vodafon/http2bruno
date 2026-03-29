@@ -14,6 +14,8 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+
+	"github.com/vodafon/rawhttp2"
 )
 
 type RequestData struct {
@@ -82,7 +84,12 @@ func DoRequest(basedir, envfile string) error {
 		return fmt.Errorf("read from stdin error %w", err)
 	}
 
-	req, err := ParseRawRequest(rawReq)
+	var req *http.Request
+	if rawhttp2.IsH2Input(rawReq) {
+		req, err = ParseH2RawRequest(rawReq)
+	} else {
+		req, err = ParseRawRequest(rawReq)
+	}
 	if err != nil {
 		return fmt.Errorf("parse raw request error %w", err)
 	}
@@ -395,6 +402,80 @@ func findRequestFolder(basedir string, path string) (string, string) {
 
 	// Nothing matched at all
 	return basedir, path
+}
+
+// ParseH2RawRequest parses a raw HTTP/2 request in Burp-like format using
+// rawhttp2.ParseBurpLikeH2Msg and converts it to a standard *http.Request.
+// The Burp-like format looks like:
+//
+//	POST /api HTTP/2
+//	Host: example.com
+//	Content-Type: application/json
+//
+//	{"key":"value"}
+func ParseH2RawRequest(rawRequest []byte) (*http.Request, error) {
+	msg, err := rawhttp2.ParseBurpLikeH2Msg(rawRequest)
+	if err != nil {
+		return nil, fmt.Errorf("parse HTTP/2 burplike request: %w", err)
+	}
+
+	method := pseudoHeaderValue(msg.Headers, ":method")
+	path := pseudoHeaderValue(msg.Headers, ":path")
+	scheme := pseudoHeaderValue(msg.Headers, ":scheme")
+	authority := pseudoHeaderValue(msg.Headers, ":authority")
+
+	if method == "" {
+		return nil, fmt.Errorf("HTTP/2 request missing :method pseudo-header")
+	}
+	if path == "" {
+		path = "/"
+	}
+	if scheme == "" {
+		scheme = "https"
+	}
+
+	rawURL := scheme + "://" + authority + path
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return nil, fmt.Errorf("parse URL %q: %w", rawURL, err)
+	}
+
+	header := make(http.Header)
+	for _, h := range msg.Headers {
+		if h.IsPseudo {
+			continue
+		}
+		name := string(h.NameDecoded)
+		value := string(h.ValueDecoded)
+		header.Add(name, value)
+	}
+
+	var body io.ReadCloser
+	if len(msg.Body) > 0 {
+		body = io.NopCloser(bytes.NewReader(msg.Body))
+	} else {
+		body = io.NopCloser(bytes.NewReader(nil))
+	}
+
+	req := &http.Request{
+		Method:        method,
+		URL:           u,
+		Header:        header,
+		Body:          body,
+		ContentLength: int64(len(msg.Body)),
+		Host:          authority,
+	}
+
+	return req, nil
+}
+
+func pseudoHeaderValue(headers []rawhttp2.HeaderLine, name string) string {
+	for _, h := range headers {
+		if h.IsPseudo && string(h.NameDecoded) == name {
+			return string(h.ValueDecoded)
+		}
+	}
+	return ""
 }
 
 // ParseRawRequest takes a raw HTTP request as []byte and returns a parsed *http.Request and error.
